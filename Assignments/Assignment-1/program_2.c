@@ -64,7 +64,7 @@ void openFile(const char *fileName, const char *mode)
         return;
     }
 
-    fd = open(fileName, flags, 0644);
+    fd = open(fileName, flags, 0777);
     if(fd == -1)
     {
         perror("open failed");
