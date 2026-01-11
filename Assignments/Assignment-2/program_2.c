@@ -1,5 +1,5 @@
 ////////////////////////////////////////////////////////////////////////////////////////////////////////
-// Name:          program_1.c
+// Name:          program_2.c
 // Task:          1. Accept file name and string from user
 //                2. Write string using write()(append mode by default)
 //                3. Show total bytes read
