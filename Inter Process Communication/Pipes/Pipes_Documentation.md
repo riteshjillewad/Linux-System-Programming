@@ -76,3 +76,62 @@ We need to close the unused ends, because if a process doesn't close unused pipe
 - The pipe's EOF behavior won't work correctly (readers won't see EOF if any write end remains open, even unused ones)
 - File descriptors leak, consuming system resources
 - The reference counting system that automatically cleans up the pipe doesn't work properly
+
+## Pipes using Command Shell
+In Unix/Linux, pipes ( | ) are used to connect **"output of one command directly to the input of another command".** So it *redirects the stdout of one process to stdin of another process*. <br>
+Syntax: `Command_A | Command_B` <br>
+The Shell takes the Standard Output (stdout) of Command_A and connects it directly to the Standard Input (stdin) of Command_B. <br>
+
+Ex: 
+```
+                                                                  ls -l | grep "budget"
+```
+- ls -l: Runs and produces a list of 100 files. Instead of printing to the screen, it writes to the Write-End of the pipe.
+- |: The connector.
+- grep "budget": Reads from the Read-End of the pipe. It filters the stream and only prints lines containing "budget" to your screen.<br>
+
+**INTERNALLY**
+- **The Parent (Shell):** Calls pipe(fd) to create the kernel buffer. It now has fd[0] (Read) and fd[1] (Write).
+- **Fork #1 (For ls):**
+  - The Shell forks a child process to run ls.
+  - The Trick: It uses the dup2 system call to replace standard output (Descriptor 1) with the Pipe's Write End (fd[1]).
+  - Now, when ls thinks it is printing to the screen, it is actually writing into the kernel pipe buffer.
+- **Fork #2 (For grep):**
+  - The Shell forks a second child process to run grep.
+  - The Trick: It uses dup2 to replace standard input (Descriptor 0) with the Pipe's Read End (fd[0]).
+  - Now, when grep reads "keyboard input", it is actually reading from the kernel pipe buffer.
+- **Close:** The Shell closes the pipe ends so the processes know when the data stream ends (EOF).
+
+## Broken Pipe Phenomenon
+The failure happens because of a specific rule the Kernel enforces: "You cannot write to a pipe if no one is listening."
+
+### Phase 1: The Connection
+- Server: Opens the pipe (open(..., O_WRONLY)). It blocks, waiting for a reader.
+- Client: Opens the pipe (open(..., O_RDONLY)).
+- Success: Both are now connected. The Kernel allocates a buffer in RAM.
+- Server: Writes data ("Hello World") into the buffer.
+
+### Phase 2: The Disconnect (The Trigger)
+- Client: Reads some data (e.g., "Hello").
+- Client: Closes the file descriptor (close(fd)).
+- This is the critical moment. The Client has detached from the pipe.
+
+### Phase 3: The Crash (SIGPIPE)
+Now, the Server is holding the Write end of a pipe that has zero readers.
+- The Kernel's Reaction: The Kernel sees the Server trying to write (or even just holding the pipe open while attempting to write next). It determines this is a pointless operation because the data has nowhere to go.
+- The Signal: The Kernel sends a hardware signal called SIGPIPE (Signal Pipe) to the Server process.
+- The Default Action: By default, if a program receives SIGPIPE, it terminates immediately. It doesn't print an error; it just silently dies.
+
+### Phase 4: The Data Loss
+- Server Dies: Because of SIGPIPE, the Server process vanishes.
+- Reference Count Reaches Zero:
+- Client closed the Read end.
+- Server (now dead) automatically closed the Write end.
+- Total Users: 0.
+- Cleanup: The Kernel sees the pipe is unused. It deletes the buffer. Any unread data (like the "World" part) is instantly destroyed from RAM.
+
+### Phase 5: The Second Attempt
+- Client: Comes back and tries to open() the pipe again.
+- Result: Since the Server is dead, there is no Writer. The Client will simply block (hang) waiting for a new Writer to appear, or if you opened it in Non-Blocking mode, it will return an error/EOF. The old data is gone forever.
+
+> refer `namedPipeServer_3.c` to understand it properly
